@@ -19,7 +19,7 @@ external commands, LSP results, etc.
 
 There will be a 3-teir separation-of-concerns:
 - Tier1: Responsible for reading keys from the user and drawing application to the terminal.
-- Tier2: Responsible for mutating the application state.
+- Tier2: Responsible for mutating the application state. This involves interpreting the received events from any tier1 processes/threads.
 - Tier3: Responsible for interacting with the external state (filesystem, external commands, language servers, etc).
 
 The goal of separating Tier1 and Tier2 is to allow multiple terminal instances
