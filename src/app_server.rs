@@ -54,69 +54,6 @@ impl AppServer {
         }
     }
 
-    fn normal_mappings(&mut self, key: Key) -> Result<()> {
-        let cur_tab = &mut self.tabs[self.cur_tab];
-        let cur_win = cur_tab.cur_window_mut();
-        let mut cpos = cur_win.cursor_pos();
-        {
-            let cur_buf = cur_win.cur_buffer_mut();
-            match key {
-                Key::Char(c) => match c {
-                    'j' => cpos.row += (cpos.row + 1 != cur_buf.num_lines()) as usize,
-                    'k' => cpos.row -= (cpos.row != 0) as usize,
-                    'l' => cpos.col += (cpos.col + 1 != cur_buf.line_len(cpos.row)) as usize,
-                    'h' => cpos.col -= (cpos.col != 0) as usize,
-                    'i' => self.mode = Mode::Insert,
-                    _ => {}
-                },
-                _ => {}
-            };
-        }
-        cur_win.set_cursor_pos(cpos);
-        Ok(())
-    }
-
-    fn insert_mappings(&mut self, key: Key) -> Result<()> {
-        let cur_tab = &mut self.tabs[self.cur_tab];
-        let cur_win = cur_tab.cur_window_mut();
-        let mut cpos = cur_win.cursor_pos();
-
-        {
-            let cur_buf = &mut cur_win.cur_buffer_mut();
-            match key {
-                Key::Char(c) => {
-                    cur_buf.insert(cpos.row, cpos.col, c);
-                    cpos.col += 1;
-                }
-                Key::Esc => self.mode = Mode::Normal,
-                Key::Backspace => {
-                    if cpos.col != 0 {
-                        cpos.col -= 1;
-                        cur_buf.remove(cpos.row, cpos.col);
-                    } else if cpos.row != 0 {
-                        cpos.row -= 1;
-                        cpos.col = cur_buf.line_len(cpos.row);
-                        cur_buf.join_below(cpos.row)
-                    }
-                }
-                Key::Enter => {
-                    cur_buf.insert_line(cpos.row);
-                    cpos.row += 1;
-                    cpos.col = 0;
-                }
-                Key::Tab => {}
-                Key::BackTab => {}
-                Key::Left => {}
-                Key::Right => {}
-                Key::Up => {}
-                Key::Down => {}
-                _ => {}
-            };
-        }
-        cur_win.set_cursor_pos(cpos);
-        Ok(())
-    }
-
     fn make_draw_info(&self) -> Result<DrawInfo> {
         // Tabline
         let mut lines = vec![(0..self.tabs.len())
@@ -127,7 +64,7 @@ impl AppServer {
         let cur_tab = &self.tabs[self.cur_tab];
         let cur_win = &cur_tab.cur_window();
         let cur_buf = &cur_win.cur_buffer();
-        let cpos = cur_win.cursor_pos();
+        let cpos = cur_buf.get_cursor(cur_win.id()).unwrap();
         let win_offset = cur_win.window_offset();
         let ui_size = &self.ui_subscriber.screen_size;
 
@@ -154,11 +91,8 @@ impl AppServer {
                 Event::ResizeUI(_) => {
                     todo!()
                 }
-                Event::KeyPress(key) => {
-                    match self.mode {
-                        Mode::Normal => self.normal_mappings(key),
-                        Mode::Insert => self.insert_mappings(key),
-                    }?;
+                Event::KeyPress(_key) => {
+                    todo!()
                 }
             }
 
