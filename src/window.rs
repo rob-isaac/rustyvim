@@ -8,7 +8,7 @@ pub(crate) struct WindowOffset {
     pub(crate) col: usize,
 }
 
-#[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub(crate) struct WindowId(pub(crate) usize);
 
 #[derive(Default, Debug, PartialEq, Eq)]

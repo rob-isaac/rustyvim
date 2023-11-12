@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use anyhow::Result;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader};
@@ -20,17 +21,14 @@ pub(crate) struct CursorPos {
 pub(crate) struct Buffer {
     lines: Vec<String>,
     filename: Option<PathBuf>,
-    cursors: Vec<CursorPos>,
+    cursors: HashMap<WindowId, CursorPos>,
 }
 
 impl Default for Buffer {
     fn default() -> Self {
         Buffer {
             lines: vec![String::new()],
-            filename: None,
-            cursors: vec![CursorPos {
-                ..Default::default()
-            }],
+            ..Default::default()
         }
     }
 }
@@ -70,15 +68,11 @@ impl Buffer {
     }
 
     pub(crate) fn get_cursor(&self, id: WindowId) -> Option<CursorPos> {
-        self.cursors.get(id.0).cloned()
+        self.cursors.get(&id).cloned()
     }
 
     fn get_cursor_mut(&mut self, id: WindowId) -> &mut CursorPos {
-        let id_raw = id.0;
-        if id_raw >= self.cursors.len() {
-            self.cursors.resize_with(id_raw + 1, Default::default);
-        }
-        &mut self.cursors[id_raw]
+        self.cursors.entry(id).or_default()
     }
 
     pub(crate) fn set_cursor(&mut self, id: WindowId, cpos: CursorPos) {
@@ -121,30 +115,43 @@ impl Buffer {
 
     pub(crate) fn insert(&mut self, row: usize, col: usize, val: char) {
         self.lines[row].insert(col, val);
-        for cursor in &mut self.cursors {
+        for (_, cursor) in &mut self.cursors {
             cursor.col += (cursor.row == row && cursor.col >= col) as usize
         }
     }
 
     pub(crate) fn insert_line(&mut self, row: usize) {
         self.lines.insert(row, String::new());
-        for cursor in &mut self.cursors {
+        for (_, cursor) in &mut self.cursors {
             cursor.row += (cursor.row >= row) as usize
         }
     }
 
     pub(crate) fn remove(&mut self, row: usize, col: usize) {
         self.lines[row].remove(col);
+        for (_, cursor) in &mut self.cursors {
+            cursor.col -= (cursor.row == row && cursor.col > col) as usize
+        }
     }
 
     pub(crate) fn remove_line(&mut self, row: usize) {
         self.lines.remove(row);
+        for (_, cursor) in &mut self.cursors {
+            cursor.row -= (cursor.row != 0 && cursor.row >= row) as usize
+        }
     }
 
     pub(crate) fn join_above(&mut self, row: usize) {
         if row != 0 {
             let tmp = mem::take(&mut self.lines[row]);
+            let above_line_len = self.lines[row - 1].len();
             self.lines[row - 1].push_str(&tmp);
+            for (_, cursor) in &mut self.cursors {
+                if cursor.row == row {
+                    cursor.col += above_line_len;
+                }
+            }
+            // handles the row adjustments
             self.remove_line(row);
         }
     }
@@ -164,29 +171,39 @@ fn read_lines(read: impl io::Read) -> Result<Vec<String>> {
 mod tests {
     use super::*;
 
-    /// A test fixture to create a buffer from a string
-    fn buf_from_str(s: &str) -> Result<Buffer> {
-        let mut cursors = Vec::new();
-        let mut lines = Vec::new();
-        for (row, line) in s.lines().enumerate() {
-            let mut col = 0;
-            let mut chunks = Vec::new();
-            let mut matches = 0;
-            while let Some(relative_col) = line[col..].find("|") {
-                chunks.push(&line[col..col + relative_col]);
-                cursors.push(CursorPos {
-                    row,
-                    col: col + relative_col - matches,
-                });
-                col += relative_col + 1;
-                matches += 1;
-            }
-            chunks.push(&line[col..]);
-            lines.push(chunks.join(""));
-        }
-        if cursors.is_empty() {
-            panic!("couldn't find cursor position! Indicated with the '|' symbol")
-        }
+    /// A test fixture to create a buffer from a string.
+    /// Digits 0-9 are used to indicate cursor positions rather than text.
+    fn buf_from_lines(input_lines: &[&str]) -> Result<Buffer> {
+        let mut cursors = HashMap::new();
+        let lines: Vec<String> = input_lines
+            .iter()
+            .enumerate()
+            .map(|(row, line)| {
+                let mut line_cursors = 0;
+                line.char_indices()
+                    .filter_map(|(col, c)| {
+                        if let Some(d) = c.to_digit(10) {
+                            if cursors
+                                .insert(
+                                    WindowId(d as usize),
+                                    CursorPos {
+                                        row,
+                                        col: col - line_cursors,
+                                    },
+                                )
+                                .is_some()
+                            {
+                                panic!("duplicate key {}", d)
+                            }
+                            line_cursors += 1;
+                            return None;
+                        }
+                        Some(c)
+                    })
+                    .collect()
+            })
+            .collect();
+
         Ok(Buffer {
             lines,
             filename: None,
@@ -220,57 +237,72 @@ mod tests {
     /// Tests the insert method
     #[test]
     fn test_insert() -> Result<()> {
-        let mut buf = buf_from_str("|abcdefg\n|hij|klmnop|")?;
-        assert_eq!(
-            buf.cursors,
-            vec![
-                CursorPos { row: 0, col: 0 },
-                CursorPos { row: 1, col: 0 },
-                CursorPos { row: 1, col: 3 },
-                CursorPos { row: 1, col: 9 },
-            ]
-        );
+        let mut buf = buf_from_lines(&["0abcdefg", "1hij2klmnop3"])?;
         buf.insert(0, 0, 'z');
+        assert_eq!(buf, buf_from_lines(&["z0abcdefg", "1hij2klmnop3"])?);
         buf.insert(1, 3, 'y');
+        assert_eq!(buf, buf_from_lines(&["z0abcdefg", "1hijy2klmnop3"])?);
         buf.insert(1, 10, 'x');
+        assert_eq!(buf, buf_from_lines(&["z0abcdefg", "1hijy2klmnopx3"])?);
         buf.insert(1, 10, 'w');
-        assert_eq!(buf.lines, vec!["zabcdefg", "hijyklmnopwx"]);
-        assert_eq!(
-            buf.cursors,
-            vec![
-                CursorPos { row: 0, col: 1 },
-                CursorPos { row: 1, col: 0 },
-                CursorPos { row: 1, col: 4 },
-                CursorPos { row: 1, col: 12 },
-            ]
-        );
+        assert_eq!(buf, buf_from_lines(&["z0abcdefg", "1hijy2klmnopwx3"])?);
         Ok(())
     }
 
     /// Tests the insert_row method
     #[test]
     fn test_insert_row() -> Result<()> {
-        let mut buf = buf_from_str("a|bcdefg\n|hijklmnop|")?;
-        assert_eq!(
-            buf.cursors,
-            vec![
-                CursorPos { row: 0, col: 1 },
-                CursorPos { row: 1, col: 0 },
-                CursorPos { row: 1, col: 9 },
-            ]
-        );
+        let mut buf = buf_from_lines(&["a0bcdefg", "1hijklmnop2"])?;
         buf.insert_line(0);
+        assert_eq!(buf, buf_from_lines(&["", "a0bcdefg", "1hijklmnop2"])?);
         buf.insert_line(2);
+        assert_eq!(buf, buf_from_lines(&["", "a0bcdefg", "", "1hijklmnop2"])?);
         buf.insert_line(4);
-        assert_eq!(buf.lines(), vec!["", "abcdefg", "", "hijklmnop", ""]);
         assert_eq!(
-            buf.cursors,
-            vec![
-                CursorPos { row: 1, col: 1 },
-                CursorPos { row: 3, col: 0 },
-                CursorPos { row: 3, col: 9 },
-            ]
+            buf,
+            buf_from_lines(&["", "a0bcdefg", "", "1hijklmnop2", ""])?
         );
+        Ok(())
+    }
+
+    /// Tests the remove method
+    #[test]
+    fn test_remove() -> Result<()> {
+        let mut buf = buf_from_lines(&["a0bc", "1def2"])?;
+        buf.remove(0, 1);
+        assert_eq!(buf, buf_from_lines(&["a0c", "1def2"])?);
+        buf.remove(0, 0);
+        assert_eq!(buf, buf_from_lines(&["0c", "1def2"])?);
+        buf.remove(1, 0);
+        assert_eq!(buf, buf_from_lines(&["0c", "1ef2"])?);
+        buf.remove(1, 1);
+        assert_eq!(buf, buf_from_lines(&["0c", "1e2"])?);
+        Ok(())
+    }
+
+    /// Tests the remove_line method
+    #[test]
+    fn test_remove_line() -> Result<()> {
+        let mut buf = buf_from_lines(&["a0bc", "de", "1fg2"])?;
+        buf.remove_line(0);
+        assert_eq!(buf, buf_from_lines(&["d0e", "1fg2"])?);
+        buf.remove_line(1);
+        assert_eq!(buf, buf_from_lines(&["1d0e2"])?);
+        // TODO: We should test what happens when we remove a line and the cursor is now
+        // off the end. We don't have a good way to represent this in the buf_from_lines paradigm
+        Ok(())
+    }
+
+    /// Tests the join_above method
+    #[test]
+    fn test_join_above() -> Result<()> {
+        let mut buf = buf_from_lines(&["a0bc", "de", "1fg2"])?;
+        buf.join_above(0);
+        assert_eq!(buf, buf_from_lines(&["a0bc", "de", "1fg2"])?);
+        buf.join_above(1);
+        assert_eq!(buf, buf_from_lines(&["a0bcde", "1fg2"])?);
+        buf.join_above(1);
+        assert_eq!(buf, buf_from_lines(&["a0bcde1fg2"])?);
         Ok(())
     }
 }
