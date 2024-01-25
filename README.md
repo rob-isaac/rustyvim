@@ -28,3 +28,6 @@ without interacting with a terminal. The goal of separating Tier2 and Tier3 is
 to allow Tier2 to run locally even while Tier3 runs remotely so that the
 application updates quickly even over a slow connection (though things like
 file-search and lsp results will still experience network lag).
+
+# Other Design Differences
+There should be smart detection of important buffers (ones that the user has modified or entered insert-mode in)
