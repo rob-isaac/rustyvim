@@ -14,6 +14,10 @@ impl Buffer {
     pub fn get_line(&self, i: usize) -> &str {
         return &self.lines[i];
     }
+    pub fn get_lines(&self) -> &[String] {
+        return &self.lines;
+    }
+    // FIXME: The mutation functions in this class use byte-ranges rather than character ranges
     pub fn insert_str(&mut self, row: usize, col: usize, s: &str) {
         let mut split = s.split("\n");
         let first = split.next().unwrap();
@@ -31,8 +35,16 @@ impl Buffer {
             self.lines.splice(row + 1..row + 1, to_add);
         }
     }
-    pub fn get_lines(&self) -> &[String] {
-        return &self.lines;
+    pub fn remove(&mut self, row_start: usize, col_start: usize, row_end: usize, col_end: usize) {
+        if row_start == row_end {
+            self.lines[row_start].replace_range(col_start..col_end, "");
+            return;
+        }
+        self.lines[row_start].truncate(col_start);
+        if row_end < self.lines.len() {
+            self.lines[row_end].replace_range(..col_end, "");
+        }
+        self.lines.drain(row_start + 1..row_end);
     }
 }
 
@@ -81,5 +93,23 @@ mod tests {
         assert_eq!(buf.get_lines(), ["", "hello world", ""]);
         buf.insert_str(1, 5, "\n---\n");
         assert_eq!(buf.get_lines(), ["", "hello", "---", " world", ""])
+    }
+    #[test]
+    fn remove() {
+        let mut buf = Buffer::from_str("hello world");
+        buf.remove(0, 0, 0, 5);
+        assert_eq!(buf.get_lines(), [" world"]);
+    }
+    #[test]
+    fn remove_multiline() {
+        let mut buf = Buffer::from_str("hello world\nanother line");
+        buf.remove(0, 1, 1, 1);
+        assert_eq!(buf.get_lines(), ["h", "nother line"]);
+    }
+    #[test]
+    fn remove_everything() {
+        let mut buf = Buffer::from_str("hello world\nanother line");
+        buf.remove(0, 0, 2, 0);
+        assert_eq!(buf.get_lines(), [""]);
     }
 }
