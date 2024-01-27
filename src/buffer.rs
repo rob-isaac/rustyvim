@@ -3,19 +3,22 @@ pub struct Buffer {
 }
 
 impl Buffer {
+    pub fn new() -> Self {
+        return Self::from_str("");
+    }
     pub fn from_str(s: &str) -> Self {
         Self {
             lines: s.split("\n").map(String::from).collect(),
         }
     }
     pub fn to_str(&self) -> String {
-        return self.lines.join("\n");
+        self.lines.join("\n")
     }
     pub fn get_line(&self, i: usize) -> &str {
-        return &self.lines[i];
+        &self.lines[i]
     }
     pub fn get_lines(&self) -> &[String] {
-        return &self.lines;
+        &self.lines
     }
     // FIXME: The mutation functions in this class use byte-ranges rather than character ranges
     pub fn insert_str(&mut self, row: usize, col: usize, s: &str) {
@@ -52,6 +55,10 @@ impl Buffer {
 mod tests {
     use super::*;
 
+    #[test]
+    fn create_empty() {
+        assert_eq!(Buffer::new().to_str(), "");
+    }
     #[test]
     fn create_from_string() {
         let str = "hello world";
