@@ -48,6 +48,15 @@ impl PaneManager {
     }
 
     fn split(&mut self, pane_num: usize, split_type: SplitType) -> Result<usize> {
+        // NOTE: The scaling heuristic on a split is the following:
+        // 1. Determine the percentage of the axis taken up by the window we are splitting as 1/N
+        // 2. Scale splits along that axis to the left and right by N/(N+1), squishing them towards edges
+        // 3. Split the newly sized window in half
+        //
+        // 1/N = k/kN => N/(N+1) = kN/(kN + k) so for our quantized scheme of k/M with
+        // k:=quantized_rows_or_cols and M:=max_quantized_rows_or_cols we can scale by
+        // kM/(kM + k)
+
         let new_pane_num = self
             .base_panes
             .iter()
@@ -123,14 +132,6 @@ impl PaneManager {
         self.split(pane_num, SplitType::Col)
     }
 }
-
-// TODO: The rescaling heuristic on a split should be the following:
-// Determine the percentage of the axis taken up by the window we are splitting as 1/N
-// Scale splits along that axis to the left and right by N/(N+1), squishing them towards edges
-// Split the newly sized window in half
-//
-// 1/N = k/kN => N/(N+1) = kN/(kN + k) so for our quantized scheme of k/M we can scale by
-// kM/(kM + k)
 
 #[cfg(test)]
 mod tests {
