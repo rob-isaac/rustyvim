@@ -45,6 +45,8 @@ impl BufferList {
 
 #[cfg(test)]
 mod tests {
+    use crate::buffer::Mark;
+
     use super::*;
 
     #[test]
@@ -69,7 +71,7 @@ mod tests {
     fn mutate_buffer() {
         let mut list = BufferList::new();
         let bnum = list.add_buf(Buffer::new());
-        list.get_buf_mut(bnum).unwrap().insert(0, 0, "hello world");
+        list.get_buf_mut(bnum).unwrap().insert(Mark::new(0, 0), "hello world");
         assert_eq!(list.num_bufs(), 1);
         assert_eq!(list.get_buf(bnum).unwrap().to_str(), "hello world");
     }
@@ -92,7 +94,7 @@ mod tests {
         let mut list = BufferList::from_bufs(vec![Buffer::from_str("hi"), Buffer::from_str("bye")]);
         list.remove(0);
         for buf in list.iter_mut() {
-            buf.insert(0, 0, "hi ");
+            buf.insert(Mark::new(0, 0), "hi ");
             assert_eq!(buf.to_str(), "hi bye");
         }
     }

@@ -1,5 +1,26 @@
 use std::collections::HashMap;
 
+// NOTE: We prob want to move the bufferlist module into here at some point
+// NOTE: We prob want an InsertBuffer type which buffers an insert-mode insertion
+// so that we don't have O(N^2) perf
+// TODO: Need to test/implement proper behavior for out-of-bounds marks. E.g. if we are inserting
+// in an out-of-bounds area, do we want to pad with whitespace to make it in-bounds or to clamp the
+// insertion begin area to be in-bounds? Additionally, when moving downwards through lines of
+// different length, we want our mark to display like the following:
+// aaaaaaaaaa[a]aaaaaaa
+// bbb[b]
+// dddddddddd[d]d
+//
+// But if we stop to insert in the b-line we probably want the following:
+// aaaaaaaaaa[a]aaaaaaa
+// bbb[b]
+// ddd[d]dddddddd
+//
+// This leads to the heuristic of allowing OOB until insertion, at which point the mark gets
+// clamped.
+// TODO: Allow using character indexes instead of byte indexes for columns
+// TODO: Folds
+
 const WINDOW_MARK_OFFSET: u8 = 2 * 26;
 
 pub struct Buffer {
@@ -13,10 +34,39 @@ pub struct Mark {
     pub col: usize,
 }
 
-// TODO: Allow using character indexes instead of byte indexes for columns
+impl Mark {
+    pub fn new(row: usize, col: usize) -> Self {
+        Self { row, col }
+    }
+    fn move_member(member: &mut usize, delta: i64) {
+        if delta < 0 {
+            let delta = (-delta) as usize;
+            *member = if delta >= *member { 0 } else { *member - delta }
+        } else {
+            *member += delta as usize;
+        }
+    }
+    pub fn move_row(&mut self, delta: i64) {
+        Self::move_member(&mut self.row, delta)
+    }
+    pub fn move_col(&mut self, delta: i64) {
+        Self::move_member(&mut self.col, delta)
+    }
+    pub fn clamp_row(&mut self, max: usize) {
+        if self.row > max {
+            self.row = max;
+        }
+    }
+    pub fn clamp_col(&mut self, max: usize) {
+        if self.col > max {
+            self.col = max;
+        }
+    }
+}
+
 impl Buffer {
     pub fn new() -> Self {
-        return Self::from_str("");
+        Self::from_str("")
     }
     pub fn from_str(s: &str) -> Self {
         Self {
@@ -34,7 +84,8 @@ impl Buffer {
         &self.lines
     }
 
-    pub fn insert(&mut self, row: usize, col: usize, s: &str) {
+    pub fn insert(&mut self, insert_mark: Mark, s: &str) {
+        let (row, col) = (insert_mark.row, insert_mark.col);
         let mut split_iter = s.split("\n");
         let first = split_iter.next().unwrap();
         if split_iter.clone().peekable().peek() == None {
@@ -76,7 +127,9 @@ impl Buffer {
         }
     }
 
-    pub fn remove(&mut self, row_start: usize, col_start: usize, row_end: usize, col_end: usize) {
+    pub fn remove(&mut self, mark_start: Mark, mark_end: Mark) {
+        let (row_start, col_start, row_end, col_end) =
+            (mark_start.row, mark_start.col, mark_end.row, mark_end.col);
         if row_start == row_end {
             self.lines[row_start].replace_range(col_start..col_end, "");
             for (_, mark) in self.marks.iter_mut() {
@@ -107,13 +160,13 @@ impl Buffer {
                 }
             } else if mark.row > row_start {
                 if mark.row <= row_end {
-                    mark.row = row_start;
                     if mark.row < row_end || mark.col < col_end {
                         mark.col = col_start;
                     } else {
                         mark.col -= col_end;
                         mark.col += col_start;
                     }
+                    mark.row = row_start;
                 } else {
                     mark.row -= row_end - row_start;
                 }
@@ -123,6 +176,18 @@ impl Buffer {
 
     pub fn set_mark(&mut self, key: u8, mark: Mark) {
         self.marks.insert(key, mark);
+    }
+
+    pub fn move_mark(&mut self, key: u8, drow: i64, dcol: i64) {
+        if let Some(mark) = self.marks.get_mut(&key) {
+            mark.move_row(drow);
+            mark.move_col(dcol);
+        } else {
+            let drow = if drow < 0 { 0 } else { drow };
+            let dcol = if dcol < 0 { 0 } else { dcol };
+            self.marks
+                .insert(key, Mark::new(drow as usize, dcol as usize));
+        }
     }
 
     pub fn get_mark(&self, key: u8) -> Mark {
@@ -169,37 +234,37 @@ mod tests {
     #[test]
     fn insert() {
         let mut buf = Buffer::from_str("hello world");
-        buf.insert(0, 0, " ");
-        buf.insert(0, buf.get_line(0).len(), " ");
-        buf.insert(0, 6, "w");
+        buf.insert(Mark::new(0, 0), " ");
+        buf.insert(Mark::new(0, buf.get_line(0).len()), " ");
+        buf.insert(Mark::new(0, 6), "w");
         assert_eq!(buf.to_str(), " hellow world ")
     }
     #[test]
     fn insert_multiline_str() {
         let mut buf = Buffer::from_str("hello world");
-        buf.insert(0, 0, "\n");
+        buf.insert(Mark::new(0, 0), "\n");
         assert_eq!(buf.get_lines(), ["", "hello world"]);
-        buf.insert(1, buf.get_line(1).len(), "\n");
+        buf.insert(Mark::new(1, buf.get_line(1).len()), "\n");
         assert_eq!(buf.get_lines(), ["", "hello world", ""]);
-        buf.insert(1, 5, "\n---\n");
+        buf.insert(Mark::new(1, 5), "\n---\n");
         assert_eq!(buf.get_lines(), ["", "hello", "---", " world", ""])
     }
     #[test]
     fn remove() {
         let mut buf = Buffer::from_str("hello world");
-        buf.remove(0, 0, 0, 5);
+        buf.remove(Mark::new(0, 0), Mark::new(0, 5));
         assert_eq!(buf.get_lines(), [" world"]);
     }
     #[test]
     fn remove_multiline() {
         let mut buf = Buffer::from_str("hello world\nanother line");
-        buf.remove(0, 1, 1, 1);
+        buf.remove(Mark::new(0, 1), Mark::new(1, 1));
         assert_eq!(buf.get_lines(), ["hnother line"]);
     }
     #[test]
     fn remove_everything() {
         let mut buf = Buffer::from_str("hello world\nanother line");
-        buf.remove(0, 0, 2, 0);
+        buf.remove(Mark::new(0, 0), Mark::new(2, 0));
         assert_eq!(buf.get_lines(), [""]);
     }
 
@@ -220,7 +285,7 @@ mod tests {
         buf.set_mark(3, Mark { row: 0, col: 6 });
 
         let to_insert = "very ";
-        buf.insert(0, 0, to_insert);
+        buf.insert(Mark::new(0, 0), to_insert);
 
         // unchanged
         assert_eq!(buf.get_mark(0), Mark { row: 0, col: 0 });
@@ -261,7 +326,7 @@ mod tests {
         buf.set_mark(3, Mark { row: 0, col: 6 });
 
         let to_insert = "ot dog\nThis is j";
-        buf.insert(0, 1, to_insert);
+        buf.insert(Mark::new(0, 1), to_insert);
 
         // unchanged
         assert_eq!(buf.get_mark(0), Mark { row: 0, col: 0 });
@@ -301,7 +366,7 @@ mod tests {
         );
         buf.set_mark(3, Mark { row: 0, col: 6 });
 
-        buf.remove(0, 1, 0, 1 + "ello wo".len());
+        buf.remove(Mark::new(0, 1), Mark::new(0, 1 + "ello wo".len()));
 
         // unchanged
         assert_eq!(buf.get_mark(0), Mark { row: 0, col: 0 });
@@ -335,7 +400,7 @@ mod tests {
         );
         buf.set_mark(3, Mark { row: 1, col: 8 });
 
-        buf.remove(0, 1, 1, 2);
+        buf.remove(Mark::new(0, 1), Mark::new(1, 2));
 
         // unchanged
         assert_eq!(buf.get_mark(0), Mark { row: 0, col: 0 });
@@ -345,5 +410,22 @@ mod tests {
         assert_eq!(buf.get_mark(2), Mark { row: 0, col: 1 });
         // moved by the deleted section
         assert_eq!(buf.get_mark(3), Mark { row: 0, col: 7 });
+    }
+
+    #[test]
+    fn mark_methods() {
+        let mut m = Mark::new(0, 0);
+
+        m.move_col(-1);
+        m.move_row(-1);
+        assert_eq!(m, Mark::new(0, 0));
+
+        m.move_col(1);
+        m.move_row(1);
+        assert_eq!(m, Mark::new(1, 1));
+
+        m.clamp_row(0);
+        m.clamp_col(0);
+        assert_eq!(m, Mark::new(0, 0));
     }
 }
