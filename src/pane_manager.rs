@@ -2,14 +2,14 @@ use anyhow::{anyhow, Result};
 
 #[derive(Copy, Clone)]
 pub struct Pane {
-    buf_num: usize,
+    pub buf_num: usize,
     row0: u8,
     col0: u8,
     row1: u8,
     col1: u8,
 }
 
-const MAX_BASE_PANES: usize = 8;
+pub const MAX_BASE_PANES: usize = 8;
 const ROW_QUANTIZATION: usize = 256;
 const COL_QUANTIZATION: usize = 256;
 const ROW_MAX: usize = ROW_QUANTIZATION - 1;
@@ -17,6 +17,7 @@ const COL_MAX: usize = COL_QUANTIZATION - 1;
 
 pub struct PaneManager {
     base_panes: [Option<Pane>; MAX_BASE_PANES],
+    active_pane_num: u8,
     // TODO: floating panes
 }
 
@@ -30,6 +31,7 @@ impl PaneManager {
     pub fn new() -> Self {
         let mut ret = PaneManager {
             base_panes: [None; MAX_BASE_PANES],
+            active_pane_num: 0,
         };
         ret.base_panes[0] = Some(Pane {
             buf_num: 0,
@@ -39,6 +41,14 @@ impl PaneManager {
             col1: COL_MAX as u8,
         });
         ret
+    }
+
+    pub fn get_active_pane(&self) -> &Pane {
+        self.base_panes[self.active_pane_num as usize].as_ref().unwrap()
+    }
+
+    pub fn get_active_pane_num(&self) -> u8 {
+        self.active_pane_num
     }
 
     pub fn num_base_panes(&self) -> usize {
